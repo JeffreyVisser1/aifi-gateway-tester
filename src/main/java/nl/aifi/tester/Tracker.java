@@ -53,6 +53,7 @@ public final class Tracker {
     private final Map<String, TestRun> byKey = new ConcurrentHashMap<>();
     private final List<Unmatched> unmatched = new CopyOnWriteArrayList<>();
     private final AtomicInteger echoes = new AtomicInteger();
+    private final List<String[]> unreadable = new CopyOnWriteArrayList<>();
     private final AtomicInteger counter = new AtomicInteger();
 
     public Tracker(TesterConfig.Matching m, PseudoLookup pseudoLookup) {
@@ -158,6 +159,13 @@ public final class Tracker {
     public boolean hasPending() {
         return runs.stream().anyMatch(r -> r.outcome == TestRun.Outcome.PENDING);
     }
+
+    /** An object arrived that could not be read as DICOM: {time, calling AE, SOP class, what it looked like}. */
+    public void onUnreadable(String callingAe, String sopClassUid, String kind) {
+        unreadable.add(new String[] {Long.toString(System.currentTimeMillis()), callingAe, sopClassUid, kind});
+    }
+
+    public List<String[]> unreadable() { return new ArrayList<>(unreadable); }
 
     public List<TestRun> runs() { return new ArrayList<>(runs); }
     public List<Unmatched> unmatched() { return new ArrayList<>(unmatched); }

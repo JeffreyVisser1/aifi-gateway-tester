@@ -213,4 +213,49 @@ class SessionTest {
         assertEquals(a.getString(Tag.SOPInstanceUID), a.getSequence(Tag.ReferencedImageSequence).get(0)
                 .getString(Tag.ReferencedSOPInstanceUID), "reference follows the renamed instance");
     }
+
+    @Test
+    void unreadableObjectIsExplainedKeptAndReported() throws Exception {
+        Session s = newSession();
+        byte[] zip = {'P', 'K', 3, 4, 20, 0, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6};
+        org.dcm4che3.net.Device d = new org.dcm4che3.net.Device("zip-sender");
+        java.util.concurrent.ExecutorService e = java.util.concurrent.Executors.newCachedThreadPool();
+        java.util.concurrent.ScheduledExecutorService sc = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+        d.setExecutor(e);
+        d.setScheduledExecutor(sc);
+        org.dcm4che3.net.Connection local = new org.dcm4che3.net.Connection();
+        org.dcm4che3.net.ApplicationEntity ae = new org.dcm4che3.net.ApplicationEntity("ZIPPER");
+        ae.addConnection(local);
+        d.addConnection(local);
+        d.addApplicationEntity(ae);
+        org.dcm4che3.net.pdu.AAssociateRQ rq = new org.dcm4che3.net.pdu.AAssociateRQ();
+        rq.setCallingAET("ZIPPER");
+        rq.setCalledAET("AIFITEST");
+        rq.addPresentationContext(new org.dcm4che3.net.pdu.PresentationContext(1, UID.SecondaryCaptureImageStorage, UID.ExplicitVRLittleEndian));
+        org.dcm4che3.net.Association as = ae.connect(local, new org.dcm4che3.net.Connection(null, "127.0.0.1", cfg.receiver.port), rq);
+        int[] status = {-1};
+        as.cstore(UID.SecondaryCaptureImageStorage, "2.25.42", org.dcm4che3.net.Priority.NORMAL,
+                new org.dcm4che3.net.InputStreamDataWriter(new java.io.ByteArrayInputStream(zip)), UID.ExplicitVRLittleEndian,
+                new org.dcm4che3.net.DimseRSPHandler(as.nextMessageID()) {
+                    @Override
+                    public void onDimseRSP(org.dcm4che3.net.Association a, Attributes cmd, Attributes data) {
+                        super.onDimseRSP(a, cmd, data);
+                        status[0] = cmd.getInt(Tag.Status, -1);
+                    }
+                });
+        as.waitForOutstandingRSP();
+        as.release();
+        as.waitForSocketClose();
+        e.shutdownNow();
+        sc.shutdownNow();
+        s.close();
+
+        assertEquals(0x0110, status[0], "sender is told it failed");
+        List<String[]> bad = s.tracker().unreadable();
+        assertEquals(1, bad.size());
+        assertEquals("ZIPPER", bad.get(0)[1]);
+        assertTrue(bad.get(0)[3].contains("ZIP"), bad.get(0)[3]);
+        assertTrue(Files.exists(tmp.resolve("reports/s1/unreadable/2.25.42.bin")));
+        assertTrue(Files.readString(tmp.resolve("reports/s1/report.html")).contains("Onleesbare objecten"));
+    }
 }

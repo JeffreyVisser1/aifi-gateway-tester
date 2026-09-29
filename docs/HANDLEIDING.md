@@ -132,6 +132,12 @@ die nog wachtten krijgen de uitkomst **niet afgewacht**.
 te koppelen was: meestal komt het resultaat terug met de gepseudonimiseerde StudyInstanceUID
 en zonder AccessionNumber. Zet dan `jivexDatabase.enabled: true`.
 
+**Onleesbare objecten**: stuurt iemand iets naar de tester dat geen geldige DICOM-dataset is
+(bijvoorbeeld een ZIP- of PDF-bestand, of een compleet DICOM-bestand inclusief preamble), dan
+antwoordt de tester met status `0110`, logt hij de verzendende AE-titel, het IP-adres en wat
+het lijkt te zijn, en bewaart hij de ruwe bytes in `reports\<sessie>\unreadable\`. Het
+rapport toont ze onder "Onleesbare objecten".
+
 ## 6. Privacy
 
 Het rapport en de log bevatten geen patiëntgegevens: een studie heet daar alleen naar een

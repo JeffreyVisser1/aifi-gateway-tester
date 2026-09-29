@@ -41,7 +41,8 @@ public final class Session implements AutoCloseable {
         this.sender = new Sender(cfg.studies);
         long now = System.currentTimeMillis();
         this.report = new ReportWriter(reportDir, cfg, now, library.studies().size());
-        this.receiver = new Receiver(cfg.receiver, tracker, cfg.receiver.saveFiles ? reportDir.resolve("received") : null);
+        this.receiver = new Receiver(cfg.receiver, tracker, cfg.receiver.saveFiles ? reportDir.resolve("received") : null,
+                reportDir.resolve("unreadable"));
         this.sendPool = Executors.newFixedThreadPool(cfg.run.parallelSends, r -> {
             Thread t = new Thread(r, "aifitest-send");
             t.setDaemon(true);

@@ -127,6 +127,7 @@ public final class ReportWriter {
         sum.put("medianSecondsToFirstResult", percentile(all.ttfr, 50));
         sum.put("p90SecondsToFirstResult", percentile(all.ttfr, 90));
         sum.put("unmatchedObjects", tracker.unmatched().size());
+        sum.put("unreadableObjects", tracker.unreadable().size());
         root.put("summary", sum);
         List<Object> list = new ArrayList<>();
         for (TestRun r : runs) {
@@ -211,6 +212,19 @@ public final class ReportWriter {
                 Tracker.Unmatched u = um.get(i);
                 h.append("<tr><td>").append(TS.format(Instant.ofEpochMilli(u.at))).append("</td><td>").append(esc(u.callingAe))
                  .append("</td><td>").append(esc(u.modality)).append("</td><td>").append(esc(u.description)).append("</td></tr>");
+            }
+            h.append("</tbody></table></div>");
+        }
+
+        List<String[]> bad = tracker.unreadable();
+        if (!bad.isEmpty()) {
+            h.append("<h2>Onleesbare objecten</h2><p>").append(bad.size()).append(" object(en) ontvangen die geen geldige DICOM waren; ")
+             .append("beantwoord met status 0110 en bewaard in de map <code>unreadable</code> van deze sessie.</p>")
+             .append("<div class=\"scroll\"><table><thead><tr><th>Ontvangen</th><th>Van AE</th><th>SOP-klasse</th><th>Inhoud</th></tr></thead><tbody>");
+            for (int i = bad.size() - 1; i >= Math.max(0, bad.size() - 50); i--) {
+                String[] u = bad.get(i);
+                h.append("<tr><td>").append(TS.format(Instant.ofEpochMilli(Long.parseLong(u[0])))).append("</td><td>").append(esc(u[1]))
+                 .append("</td><td>").append(esc(u[2])).append("</td><td>").append(esc(u[3])).append("</td></tr>");
             }
             h.append("</tbody></table></div>");
         }
