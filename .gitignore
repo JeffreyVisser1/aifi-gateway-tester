@@ -1,0 +1,6 @@
+/target/
+/tester.yaml
+/reports/
+/studies/
+*.iml
+/.idea/

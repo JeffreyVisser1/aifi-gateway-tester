@@ -1,0 +1,70 @@
+# AIFI Gateway Tester - configuration
+#
+#   tester --C-STORE (random CT study)--> AIFI gateway port --> ... --> AI application
+#   tester <--C-STORE (AI result series)-- ... (JiveX / AI routes the result back to the receiver below)
+#
+# Full walkthrough: docs\HANDLEIDING.md
+
+studies:
+  dir: studies                      # folder with test studies (any sub-folder layout)
+  modalities: [CT]                  # only these; [] = all
+  uniquify: true                    # new UIDs + AccessionNumber per send: every test is a new study
+  accessionPrefix: AIFIT            # AccessionNumber = prefix + 8 digits
+
+# Gateway ports (routes) to send to. A study goes to a random target, weighted by "weight".
+targets:
+  - name: main
+    host: 127.0.0.1
+    port: 11112
+    aeTitle: AIFIGW
+    callingAeTitle: AIFITEST        # must be in the gateway's allowedCallingAeTitles
+    weight: 1
+#  - name: ai-thorax
+#    host: 127.0.0.1
+#    port: 11113
+#    aeTitle: AIFI_THORAX
+#    callingAeTitle: AIFITEST
+#    weight: 1
+
+# The AI results must be sent back here (configure JiveX / the AI result route with this AE + port).
+receiver:
+  bindAddress: 0.0.0.0
+  port: 11200
+  aeTitle: AIFITEST
+  saveFiles: false                  # true: keep the received result files in the session folder
+
+matching:
+  resultTimeoutMinutes: 30          # no result within this time = failed test
+  settleSeconds: 60                 # after the first result instance, wait this long for the rest
+  byStudyInstanceUid: true
+  byAccessionNumber: true
+  resultModalities: []              # e.g. [SR, SEG, SC]; [] = any new series counts as result
+  resultSeriesDescriptionContains: ""
+
+# Optional: also match results that come back with the JiveX pseudonym (read-only lookup).
+jivexDatabase:
+  enabled: false
+  host: 127.0.0.1
+  port: 3306
+  name: jivex
+  user: ""
+  password: ""
+
+# When to send. Several schedules run side by side; count > 1 is a burst.
+schedules:
+  - name: every-5-min
+    everyMinutes: 5
+    count: 1
+  - name: hourly-burst
+    everyMinutes: 60
+    count: 10
+    startAfterMinutes: 2
+#    target: ai-thorax              # only this port; empty = random
+
+run:
+  durationHours: 0                  # 0 = until stopped with Ctrl+C
+  parallelSends: 4                  # associations at the same time during a burst
+
+report:
+  dir: reports                      # a folder per session with report.html, results.csv, results.json, tester.log
+  refreshSeconds: 30
