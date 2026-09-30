@@ -6,7 +6,7 @@
 
     <groupId>nl.aifi</groupId>
     <artifactId>aifi-gateway-tester</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <packaging>jar</packaging>
     <name>AIFI Gateway Tester</name>
     <description>

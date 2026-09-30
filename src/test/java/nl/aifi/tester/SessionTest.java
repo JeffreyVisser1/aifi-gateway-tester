@@ -214,48 +214,127 @@ class SessionTest {
                 .getString(Tag.ReferencedSOPInstanceUID), "reference follows the renamed instance");
     }
 
-    @Test
-    void unreadableObjectIsExplainedKeptAndReported() throws Exception {
-        Session s = newSession();
-        byte[] zip = {'P', 'K', 3, 4, 20, 0, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6};
+    /** C-STORE {@code payload} to the tester's receiver as AE ZIPPER; returns the C-STORE status. */
+    private int cstore(byte[] payload, String ts, org.dcm4che3.net.pdu.PresentationContext... pcs) throws Exception {
         org.dcm4che3.net.Device d = new org.dcm4che3.net.Device("zip-sender");
         java.util.concurrent.ExecutorService e = java.util.concurrent.Executors.newCachedThreadPool();
         java.util.concurrent.ScheduledExecutorService sc = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
         d.setExecutor(e);
         d.setScheduledExecutor(sc);
-        org.dcm4che3.net.Connection local = new org.dcm4che3.net.Connection();
-        org.dcm4che3.net.ApplicationEntity ae = new org.dcm4che3.net.ApplicationEntity("ZIPPER");
-        ae.addConnection(local);
-        d.addConnection(local);
-        d.addApplicationEntity(ae);
-        org.dcm4che3.net.pdu.AAssociateRQ rq = new org.dcm4che3.net.pdu.AAssociateRQ();
-        rq.setCallingAET("ZIPPER");
-        rq.setCalledAET("AIFITEST");
-        rq.addPresentationContext(new org.dcm4che3.net.pdu.PresentationContext(1, UID.SecondaryCaptureImageStorage, UID.ExplicitVRLittleEndian));
-        org.dcm4che3.net.Association as = ae.connect(local, new org.dcm4che3.net.Connection(null, "127.0.0.1", cfg.receiver.port), rq);
-        int[] status = {-1};
-        as.cstore(UID.SecondaryCaptureImageStorage, "2.25.42", org.dcm4che3.net.Priority.NORMAL,
-                new org.dcm4che3.net.InputStreamDataWriter(new java.io.ByteArrayInputStream(zip)), UID.ExplicitVRLittleEndian,
-                new org.dcm4che3.net.DimseRSPHandler(as.nextMessageID()) {
-                    @Override
-                    public void onDimseRSP(org.dcm4che3.net.Association a, Attributes cmd, Attributes data) {
-                        super.onDimseRSP(a, cmd, data);
-                        status[0] = cmd.getInt(Tag.Status, -1);
-                    }
-                });
-        as.waitForOutstandingRSP();
-        as.release();
-        as.waitForSocketClose();
-        e.shutdownNow();
-        sc.shutdownNow();
+        try {
+            org.dcm4che3.net.Connection local = new org.dcm4che3.net.Connection();
+            org.dcm4che3.net.ApplicationEntity ae = new org.dcm4che3.net.ApplicationEntity("ZIPPER");
+            ae.addConnection(local);
+            d.addConnection(local);
+            d.addApplicationEntity(ae);
+            org.dcm4che3.net.pdu.AAssociateRQ rq = new org.dcm4che3.net.pdu.AAssociateRQ();
+            rq.setCallingAET("ZIPPER");
+            rq.setCalledAET("AIFITEST");
+            for (org.dcm4che3.net.pdu.PresentationContext pc : pcs) rq.addPresentationContext(pc);
+            org.dcm4che3.net.Association as = ae.connect(local, new org.dcm4che3.net.Connection(null, "127.0.0.1", cfg.receiver.port), rq);
+            lastAc = as.getAAssociateAC();
+            int[] status = {-1};
+            if (ts != null) {
+                as.cstore(UID.SecondaryCaptureImageStorage, "2.25.42", org.dcm4che3.net.Priority.NORMAL,
+                        new org.dcm4che3.net.InputStreamDataWriter(new java.io.ByteArrayInputStream(payload)), ts,
+                        new org.dcm4che3.net.DimseRSPHandler(as.nextMessageID()) {
+                            @Override
+                            public void onDimseRSP(org.dcm4che3.net.Association a, Attributes cmd, Attributes data) {
+                                super.onDimseRSP(a, cmd, data);
+                                status[0] = cmd.getInt(Tag.Status, -1);
+                            }
+                        });
+                as.waitForOutstandingRSP();
+            }
+            as.release();
+            as.waitForSocketClose();
+            return status[0];
+        } finally {
+            e.shutdownNow();
+            sc.shutdownNow();
+        }
+    }
+
+    private org.dcm4che3.net.pdu.AAssociateAC lastAc;
+
+    private static org.dcm4che3.net.pdu.PresentationContext pc(int id, String... ts) {
+        return new org.dcm4che3.net.pdu.PresentationContext(id, UID.SecondaryCaptureImageStorage, ts);
+    }
+
+    @Test
+    void unreadableObjectIsExplainedKeptAndReported() throws Exception {
+        Session s = newSession();
+        byte[] zip = {'P', 'K', 3, 4, 20, 0, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6};
+        int status = cstore(zip, UID.ExplicitVRLittleEndian, pc(1, UID.ExplicitVRLittleEndian));
         s.close();
 
-        assertEquals(0x0110, status[0], "sender is told it failed");
+        assertEquals(0x0110, status, "sender is told it failed");
         List<String[]> bad = s.tracker().unreadable();
         assertEquals(1, bad.size());
         assertEquals("ZIPPER", bad.get(0)[1]);
         assertTrue(bad.get(0)[3].contains("ZIP"), bad.get(0)[3]);
         assertTrue(Files.exists(tmp.resolve("reports/s1/unreadable/2.25.42.bin")));
         assertTrue(Files.readString(tmp.resolve("reports/s1/report.html")).contains("Onleesbare objecten"));
+    }
+
+    @Test
+    void aiResultSentAsZipIsUnpackedCountedAndFlagged() throws Exception {
+        ai1.zipResult = true;
+        cfg.receiver.saveFiles = true;
+        Session s = newSession();
+        s.burst(1, "main");
+        s.awaitResults(30_000);
+        s.close();
+
+        TestRun r = s.tracker().runs().get(0);
+        assertEquals(TestRun.Outcome.PASS, r.outcome, "the DICOM object inside the ZIP is the AI result");
+        assertEquals("SC 'AI result' x1 (1 via ZIP)", r.resultSummary());
+        List<String[]> odd = s.tracker().unreadable();
+        assertEquals(1, odd.size());
+        assertEquals("FAKEAI", odd.get(0)[1]);
+        assertEquals("a ZIP file with 1 DICOM object(s) and other files (.txt) instead of a DICOM data set", odd.get(0)[3]);
+        assertTrue(odd.get(0)[4].contains("uitgepakt"), odd.get(0)[4]);
+        try (var files = Files.list(tmp.resolve("reports/s1/unreadable"))) {
+            assertTrue(files.anyMatch(f -> f.toString().endsWith(".zip")), "the ZIP is kept for analysis");
+        }
+        try (var files = Files.walk(tmp.resolve("reports/s1/received"))) {
+            assertEquals(1, files.filter(f -> f.toString().endsWith(".dcm")).count(), "the unpacked object is saved as DICOM");
+        }
+        assertTrue(Files.readString(tmp.resolve("reports/s1/report.html")).contains("via ZIP"));
+    }
+
+    @Test
+    void zipWithoutDicomIsStillRefused() throws Exception {
+        Session s = newSession();
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(bytes)) {
+            z.putNextEntry(new java.util.zip.ZipEntry("report.pdf"));
+            z.write("%PDF-1.4 not really".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            z.closeEntry();
+        }
+        int status = cstore(bytes.toByteArray(), UID.ExplicitVRLittleEndian, pc(1, UID.ExplicitVRLittleEndian));
+        s.close();
+        assertEquals(0x0110, status);
+        assertEquals("a ZIP file without DICOM objects instead of a DICOM data set", s.tracker().unreadable().get(0)[3]);
+    }
+
+    @Test
+    void privateTransferSyntaxIsRefusedSoTheSenderUsesAStandardOne() throws Exception {
+        String zipSyntax = "1.2.826.0.1.3680043.9.9999.1";          // stand-in for a vendor's compressing syntax
+        Session s = newSession();
+        // one context listing the private syntax first: the standard one is chosen
+        cstore(null, null, pc(1, zipSyntax, UID.ExplicitVRLittleEndian));
+        assertEquals(UID.ExplicitVRLittleEndian, lastAc.getPresentationContext(1).getTransferSyntax());
+        // separate contexts: the private one is refused, the standard one accepted
+        cstore(null, null, pc(1, zipSyntax), pc(3, UID.ImplicitVRLittleEndian));
+        assertEquals(org.dcm4che3.net.pdu.PresentationContext.TRANSFER_SYNTAX_NOT_SUPPORTED, lastAc.getPresentationContext(1).getResult());
+        assertTrue(lastAc.getPresentationContext(3).isAccepted());
+        // only the private one: refused (and logged as a warning), nothing can be sent
+        cstore(null, null, pc(1, zipSyntax));
+        assertEquals(org.dcm4che3.net.pdu.PresentationContext.TRANSFER_SYNTAX_NOT_SUPPORTED, lastAc.getPresentationContext(1).getResult());
+        // compressed pixel data syntaxes stay accepted
+        cstore(null, null, pc(1, UID.JPEGLSLossless));
+        assertTrue(lastAc.getPresentationContext(1).isAccepted());
+        s.close();
     }
 }

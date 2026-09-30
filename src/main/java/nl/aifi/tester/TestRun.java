@@ -27,6 +27,8 @@ public final class TestRun {
         public final String description;
         public final String sopClassUid;
         public int instances;
+        /** Instances that arrived packed in a ZIP file instead of as plain DICOM. */
+        public int viaZip;
 
         ResultSeries(String modality, String description, String sopClassUid) {
             this.modality = modality;
@@ -73,8 +75,11 @@ public final class TestRun {
         this.bytes = study.bytes;
     }
 
-    synchronized void addResult(String seriesUid, String modality, String description, String sopClassUid, long now) {
-        results.computeIfAbsent(seriesUid, k -> new ResultSeries(modality, description, sopClassUid)).instances++;
+    synchronized void addResult(String seriesUid, String modality, String description, String sopClassUid, boolean viaZip,
+                                long now) {
+        ResultSeries rs = results.computeIfAbsent(seriesUid, k -> new ResultSeries(modality, description, sopClassUid));
+        rs.instances++;
+        if (viaZip) rs.viaZip++;
         if (firstResultAt == 0 || now < firstResultAt) firstResultAt = now;
         if (now > lastResultAt) lastResultAt = now;
     }
@@ -95,6 +100,7 @@ public final class TestRun {
             sb.append(r.modality.isEmpty() ? "?" : r.modality);
             if (!r.description.isEmpty()) sb.append(" '").append(r.description).append('\'');
             sb.append(" x").append(r.instances);
+            if (r.viaZip > 0) sb.append(" (").append(r.viaZip).append(" via ZIP)");
         }
         return sb.toString();
     }

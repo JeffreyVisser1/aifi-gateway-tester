@@ -35,10 +35,13 @@ public final class Tracker {
         final String studyUid;
         final String seriesUid;
         final String sopClassUid;
+        /** Arrived packed in a ZIP file instead of as a plain DICOM data set. */
+        final boolean viaZip;
 
-        Unmatched(long at, String callingAe, Attributes ds) {
+        Unmatched(long at, String callingAe, Attributes ds, boolean viaZip) {
             this.at = at;
             this.callingAe = callingAe;
+            this.viaZip = viaZip;
             this.modality = ds.getString(Tag.Modality, "");
             this.description = ds.getString(Tag.SeriesDescription, "");
             this.studyUid = ds.getString(Tag.StudyInstanceUID, "");
@@ -82,6 +85,11 @@ public final class Tracker {
     }
 
     public void onReceived(Attributes ds, String callingAe) {
+        onReceived(ds, callingAe, false);
+    }
+
+    /** @param viaZip the object was unpacked from a ZIP file the sender sent instead of a DICOM data set */
+    public void onReceived(Attributes ds, String callingAe, boolean viaZip) {
         long now = System.currentTimeMillis();
         String study = ds.getString(Tag.StudyInstanceUID, "");
         String acc = ds.getString(Tag.AccessionNumber, "");
@@ -89,7 +97,7 @@ public final class Tracker {
         if (m.byStudyInstanceUid) r = byKey.get("S:" + study);
         if (r == null && m.byAccessionNumber && !acc.isEmpty()) r = byKey.get("A:" + acc);
         if (r == null) r = byKey.get("P:" + study);
-        Unmatched u = new Unmatched(now, callingAe, ds);
+        Unmatched u = new Unmatched(now, callingAe, ds, viaZip);
         if (r == null) {
             // May still belong to a test whose JiveX pseudonym is not known yet: re-matched in check().
             unmatched.add(u);
@@ -107,7 +115,7 @@ public final class Tracker {
         if (!m.resultModalities.isEmpty() && !m.resultModalities.contains(u.modality)) return;
         if (!m.resultSeriesDescriptionContains.isEmpty() && !u.description.contains(m.resultSeriesDescriptionContains)) return;
         boolean first = r.firstResultAt == 0;
-        r.addResult(u.seriesUid, u.modality, u.description, u.sopClassUid, u.at);
+        r.addResult(u.seriesUid, u.modality, u.description, u.sopClassUid, u.viaZip, u.at);
         if (first) {
             LOG.info(r.id + " [" + r.target + "] first AI result after "
                     + String.format("%.1f", r.secondsToFirstResult()) + " s: " + u.modality + " '" + u.description + "'");
@@ -160,9 +168,12 @@ public final class Tracker {
         return runs.stream().anyMatch(r -> r.outcome == TestRun.Outcome.PENDING);
     }
 
-    /** An object arrived that could not be read as DICOM: {time, calling AE, SOP class, what it looked like}. */
-    public void onUnreadable(String callingAe, String sopClassUid, String kind) {
-        unreadable.add(new String[] {Long.toString(System.currentTimeMillis()), callingAe, sopClassUid, kind});
+    /**
+     * An object arrived that was not a plain DICOM data set:
+     * {time, calling AE, SOP class, what it looked like, what the tester did with it}.
+     */
+    public void onUnreadable(String callingAe, String sopClassUid, String kind, String handling) {
+        unreadable.add(new String[] {Long.toString(System.currentTimeMillis()), callingAe, sopClassUid, kind, handling});
     }
 
     public List<String[]> unreadable() { return new ArrayList<>(unreadable); }

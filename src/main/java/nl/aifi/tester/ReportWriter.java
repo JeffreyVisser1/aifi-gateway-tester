@@ -218,13 +218,16 @@ public final class ReportWriter {
 
         List<String[]> bad = tracker.unreadable();
         if (!bad.isEmpty()) {
-            h.append("<h2>Onleesbare objecten</h2><p>").append(bad.size()).append(" object(en) ontvangen die geen geldige DICOM waren; ")
-             .append("beantwoord met status 0110 en bewaard in de map <code>unreadable</code> van deze sessie.</p>")
-             .append("<div class=\"scroll\"><table><thead><tr><th>Ontvangen</th><th>Van AE</th><th>SOP-klasse</th><th>Inhoud</th></tr></thead><tbody>");
+            h.append("<h2>Onleesbare objecten</h2><p>").append(bad.size()).append(" object(en) ontvangen die geen gewone DICOM-dataset waren. ")
+             .append("Wat niet te lezen was, staat in de map <code>unreadable</code> van deze sessie. Een ZIP met DICOM erin pakt de tester uit en telt hij mee ")
+             .append("(zie &quot;via ZIP&quot; bij de test), maar een PACS weigert dit: de verzender moet gewone DICOM sturen.</p>")
+             .append("<div class=\"scroll\"><table><thead><tr><th>Ontvangen</th><th>Van AE</th><th>SOP-klasse</th><th>Inhoud</th>")
+             .append("<th>Afhandeling</th></tr></thead><tbody>");
             for (int i = bad.size() - 1; i >= Math.max(0, bad.size() - 50); i--) {
                 String[] u = bad.get(i);
                 h.append("<tr><td>").append(TS.format(Instant.ofEpochMilli(Long.parseLong(u[0])))).append("</td><td>").append(esc(u[1]))
-                 .append("</td><td>").append(esc(u[2])).append("</td><td>").append(esc(u[3])).append("</td></tr>");
+                 .append("</td><td>").append(esc(u[2])).append("</td><td>").append(esc(u[3])).append("</td><td>").append(esc(u[4]))
+                 .append("</td></tr>");
             }
             h.append("</tbody></table></div>");
         }

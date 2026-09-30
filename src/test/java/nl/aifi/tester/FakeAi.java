@@ -4,12 +4,14 @@ import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.UID;
 import org.dcm4che3.data.VR;
+import org.dcm4che3.io.DicomOutputStream;
 import org.dcm4che3.net.ApplicationEntity;
 import org.dcm4che3.net.Association;
 import org.dcm4che3.net.Connection;
 import org.dcm4che3.net.DataWriterAdapter;
 import org.dcm4che3.net.Device;
 import org.dcm4che3.net.DimseRSPHandler;
+import org.dcm4che3.net.InputStreamDataWriter;
 import org.dcm4che3.net.PDVInputStream;
 import org.dcm4che3.net.Priority;
 import org.dcm4che3.net.TransferCapability;
@@ -19,8 +21,11 @@ import org.dcm4che3.net.service.BasicCEchoSCP;
 import org.dcm4che3.net.service.BasicCStoreSCP;
 import org.dcm4che3.net.service.DicomServiceRegistry;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +35,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * Stand-in for "gateway + AI": receives studies and, shortly after the last instance of a
@@ -42,6 +49,8 @@ final class FakeAi implements AutoCloseable {
     volatile boolean respond = true;
     /** Answer with this StudyInstanceUID instead of the received one (simulates pseudonymized results). */
     volatile String answerStudyUid;
+    /** Send the result as a ZIP file (a DICOM file plus a text file) instead of a DICOM data set. */
+    volatile boolean zipResult;
     private final int replyPort;
     private final Device device = new Device("fake-ai");
     private final ExecutorService exec = Executors.newCachedThreadPool();
@@ -106,7 +115,8 @@ final class FakeAi implements AutoCloseable {
             rq.addPresentationContext(new PresentationContext(1, UID.SecondaryCaptureImageStorage, UID.ExplicitVRLittleEndian));
             Association as = ae.connect(local, new Connection(null, "127.0.0.1", replyPort), rq);
             as.cstore(UID.SecondaryCaptureImageStorage, r.getString(Tag.SOPInstanceUID), Priority.NORMAL,
-                    new DataWriterAdapter(r), UID.ExplicitVRLittleEndian, new DimseRSPHandler(as.nextMessageID()));
+                    zipResult ? new InputStreamDataWriter(new ByteArrayInputStream(zip(r))) : new DataWriterAdapter(r),
+                    UID.ExplicitVRLittleEndian, new DimseRSPHandler(as.nextMessageID()));
             as.waitForOutstandingRSP();
             as.release();
             as.waitForSocketClose();
@@ -116,6 +126,22 @@ final class FakeAi implements AutoCloseable {
             e.shutdownNow();
             s.shutdownNow();
         }
+    }
+
+    /** A ZIP file holding the object as a DICOM Part-10 file and a text file, as some AI senders do. */
+    static byte[] zip(Attributes ds) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            zip.putNextEntry(new ZipEntry("result/IM0001.dcm"));
+            DicomOutputStream out = new DicomOutputStream(zip, UID.ExplicitVRLittleEndian);
+            out.writeDataset(ds.createFileMetaInformation(UID.ExplicitVRLittleEndian), ds);
+            out.finish();
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("result/readme.txt"));
+            zip.write("AI result".getBytes(StandardCharsets.US_ASCII));
+            zip.closeEntry();
+        }
+        return bytes.toByteArray();
     }
 
     static int freePort() throws IOException {

@@ -138,8 +138,31 @@ antwoordt de tester met status `0110`, logt hij de verzendende AE-titel, het IP-
 het lijkt te zijn, en bewaart hij de ruwe bytes in `reports\<sessie>\unreadable\`. Het
 rapport toont ze onder "Onleesbare objecten".
 
+**AI-resultaat als ZIP** (vanaf 1.0.2): stuurt de AI-toepassing een ZIP-bestand via C-STORE,
+dan pakt de tester het uit. De DICOM-bestanden erin tellen als ontvangen (de test kan dus
+slagen; bij het resultaat staat "via ZIP") en de verzender krijgt status `0000`. Met
+`receiver.saveFiles: true` worden de uitgepakte objecten bewaard zoals andere resultaten en de
+ZIP zelf in `unreadable\`. In de log staat een waarschuwing "sent a ZIP file instead of a DICOM
+data set". Een PACS als JiveX weigert zulke objecten wél: laat de leverancier de verzending
+op gewone DICOM zetten (Explicit of Implicit VR Little Endian, geen ZIP). Een ZIP zonder
+DICOM erin wordt geweigerd met `0110`.
+
+De tester accepteert alleen standaard-transfersyntaxen (vanaf 1.0.2). Stelt een verzender een
+eigen (private) transfersyntax voor, bijvoorbeeld een die de data comprimeert, dan weigert de
+tester die in de associatie en gebruikt de verzender een standaardsyntax die hij ook aanbiedt.
+Biedt hij er geen aan, dan staat in de log "proposed SOP class ... with transfer syntax(es)
+the tester does not accept".
+
+Herkennen in een oudere versie (1.0.0): de melding
+`Unrecognized VR code: 1400H for (4B50,0403) - treat as UN` gevolgd door `EOFException`
+betekent dat er een ZIP-bestand binnenkwam: `4B50,0403` zijn de bytes `PK 03 04`, het begin
+van elk ZIP-bestand.
+
 ## 6. Privacy
 
 Het rapport en de log bevatten geen patiëntgegevens: een studie heet daar alleen naar een
 korte hash (`studyRef`), en de originele UID's, PatientID en naam worden niet getoond.
 Ontvangen resultaatbestanden worden alleen opgeslagen met `receiver.saveFiles: true`.
+Uitzondering: objecten die de tester niet kan lezen, bewaart hij altijd in
+`reports\<sessie>\unreadable\` voor analyse. Die kunnen patiëntgegevens bevatten: verwijder de
+map als het onderzoek klaar is.
