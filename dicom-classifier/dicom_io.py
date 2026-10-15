@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import posixpath
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -47,6 +49,53 @@ class SeriesInfo:
         return self.__dict__.copy()
 
 
+# ------------------------------------------------------------------ paden (Windows en Linux)
+_WIN = os.name == "nt"
+_LONG = "\\\\?\\"            # Win32-prefix voor paden langer dan MAX_PATH (260 tekens)
+_LONG_UNC = "\\\\?\\UNC\\"   # idem voor een netwerkshare (\\server\share)
+_LONG_FROM = 240             # marge: sommige API's tellen de bestandsnaam van een tijdelijk bestand mee
+
+
+def fs_path(path: str) -> str:
+    r"""Pad zoals het besturingssysteem het moet openen.
+
+    Windows zonder LongPathsEnabled kan paden vanaf 260 tekens niet openen, en os.walk slaat zulke
+    mappen dan stil over; diepe PACS-exportmappen halen die lengte makkelijk. Een lang pad krijgt
+    daarom de prefix \\?\ (of \\?\UNC\ voor een netwerkshare). Korte paden en andere
+    besturingssystemen blijven ongewijzigd.
+    """
+    if not _WIN or not path or path.startswith(_LONG):
+        return path
+    p = os.path.abspath(path)
+    if len(p) < _LONG_FROM:
+        return path
+    if p.startswith("\\\\"):
+        return _LONG_UNC + p[2:]
+    return _LONG + p
+
+
+def display_path(path: str) -> str:
+    r"""Pad zonder \\?\-prefix, voor logs, CSV en manifest."""
+    if path.startswith(_LONG_UNC):
+        return "\\\\" + path[len(_LONG_UNC):]
+    if path.startswith(_LONG):
+        return path[len(_LONG):]
+    return path
+
+
+def to_portable(path: str, root: str) -> str:
+    """Pad relatief aan root met '/' als scheidingsteken: werkt op Windows en Linux."""
+    rel = os.path.relpath(display_path(os.path.abspath(path)), display_path(os.path.abspath(root)))
+    return rel.replace(os.sep, "/")
+
+
+def from_portable(rel: str, root: str) -> str:
+    """Omgekeerde van to_portable. Absolute paden (oude manifesten) blijven zoals ze zijn."""
+    if os.path.isabs(rel) or posixpath.isabs(rel) or re.match(r"^[A-Za-z]:[\\/]", rel):
+        return rel
+    return os.path.join(root, *rel.split("/"))
+
+
 def _hash(value: str) -> str:
     """Eenrichtings-hash zodat PatientID niet in manifesten belandt (alleen voor de split)."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16] if value else ""
@@ -66,12 +115,19 @@ def scan_series(root: str, site_tag: str = "InstitutionName") -> list[SeriesInfo
     groups: dict[str, list] = defaultdict(list)
     meta: dict[str, SeriesInfo] = {}
     n_files = n_skipped = 0
-    for dirpath, _, filenames in os.walk(root):
+    unreadable_dirs: list[str] = []
+
+    def walk_error(exc: OSError):  # os.walk slaat onleesbare mappen anders stil over
+        unreadable_dirs.append(display_path(getattr(exc, "filename", "") or str(exc)))
+        log.warning("Map niet leesbaar, overgeslagen: %s (%s)", display_path(str(exc.filename)), exc.strerror)
+
+    for dirpath, _, filenames in os.walk(fs_path(root), onerror=walk_error):
         for name in filenames:
-            path = os.path.join(dirpath, name)
+            path = display_path(os.path.join(dirpath, name))
             n_files += 1
             try:
-                ds = pydicom.dcmread(path, stop_before_pixels=True, specific_tags=HEADER_TAGS + [site_tag])
+                ds = pydicom.dcmread(fs_path(path), stop_before_pixels=True,
+                                     specific_tags=HEADER_TAGS + [site_tag])
             except (InvalidDicomError, OSError, AttributeError, ValueError):
                 n_skipped += 1
                 continue
@@ -104,6 +160,8 @@ def scan_series(root: str, site_tag: str = "InstitutionName") -> list[SeriesInfo
         info.files = [it[0] for it in sorted(items, key=_sort_key)]
         out.append(info)
     log.info("%d bestanden gelezen, %d overgeslagen, %d series gevonden", n_files, n_skipped, len(out))
+    if unreadable_dirs:
+        log.warning("%d map(pen) konden niet gelezen worden; zie de waarschuwingen hierboven", len(unreadable_dirs))
     return out
 
 
@@ -148,7 +206,7 @@ def load_series_images(files: list[str], k: int, rng: np.random.Generator | None
         need[int(i)] += 1
     images: list[np.ndarray] = []
     for i, n_need in sorted(need.items()):
-        ds = pydicom.dcmread(files[i], force=True)
+        ds = pydicom.dcmread(fs_path(files[i]), force=True)
         frames = _frames_of(ds)
         for j in _pick(frames.shape[0], n_need, rng):
             images.append(_to_gray(frames[int(j)], ds))

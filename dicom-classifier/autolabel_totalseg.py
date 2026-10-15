@@ -42,6 +42,8 @@ def label_volumes(seg: np.ndarray, voxel_mm3: float, class_map: dict[int, str]) 
 
 def series_to_nifti(files: list[str], out_path: str) -> None:
     import SimpleITK as sitk
+    # Paden gaan zonder \\?\-prefix naar SimpleITK; of ITK op Windows paden > 260 tekens zelf
+    # aankan is niet getest. Zie README, sectie Windows.
     reader = sitk.ImageSeriesReader()
     reader.SetFileNames(files)  # al gesorteerd op positie in dicom_io.scan_series
     sitk.WriteImage(reader.Execute(), out_path)
@@ -56,16 +58,20 @@ def autolabel_series(files: list[str], modality: str, fast: bool = True, device:
     from totalsegmentator.python_api import totalsegmentator
 
     task = "total_mr" if modality == "MR" else "total"
-    with tempfile.TemporaryDirectory() as tmp:
+    # Windows: een bestand dat nog open is (SimpleITK, nibabel) kan niet verwijderd worden. Daarom
+    # wordt het resultaat binnen het with-blok volledig in het geheugen gelezen, en breekt een
+    # mislukte opruimactie de labeling niet af (ignore_cleanup_errors, Python 3.10+).
+    with tempfile.TemporaryDirectory(prefix="dcmcls_", ignore_cleanup_errors=True) as tmp:
         nii = os.path.join(tmp, "img.nii.gz")
         try:
             series_to_nifti(files, nii)
             seg_img = totalsegmentator(nii, None, ml=True, task=task, fast=fast and task == "total",
                                        device=device, quiet=True)
+            seg = np.asarray(seg_img.dataobj)
+            voxel_mm3 = float(np.prod(seg_img.header.get_zooms()[:3]))
+            del seg_img
         except Exception as exc:  # corrupte serie, niet-uniforme slices, ...
             log.warning("TotalSegmentator mislukt (%s): %s", files[0], exc)
             return None
-    seg = np.asarray(seg_img.dataobj)
-    voxel_mm3 = float(np.prod(seg_img.header.get_zooms()[:3]))
     vols = label_volumes(seg, voxel_mm3, class_map[task])
     return {"regions": volumes_to_regions(vols), "volumes_ml": vols}

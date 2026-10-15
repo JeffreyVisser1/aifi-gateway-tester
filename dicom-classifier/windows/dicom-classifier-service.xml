@@ -1,0 +1,24 @@
+<service>
+  <id>AifiDicomClassifier</id>
+  <name>AIFI DICOM Classifier</name>
+  <description>Receives DICOM studies (C-STORE), determines modality and body part from the pixels, returns the verdict as SR and serves the AIFI gateway add-on API.</description>
+  <!-- The venv created during installation (README, section Windows). -->
+  <executable>%BASE%\.venv\Scripts\python.exe</executable>
+  <arguments>dicom_service.py --config "%BASE%\classifier.yaml"</arguments>
+  <!-- spool\, results\, held\, failed\ and logs\ resolve relative to classifier.yaml (this folder). -->
+  <workingdirectory>%BASE%</workingdirectory>
+  <env name="PYTHONUTF8" value="1"/>
+  <env name="PYTHONUNBUFFERED" value="1"/>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <logpath>%BASE%\logs</logpath>
+  <!-- WinSW stops with Ctrl+C; the service finishes the study in progress. The spool makes a hard stop lossless. -->
+  <stoptimeout>60 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+</service>

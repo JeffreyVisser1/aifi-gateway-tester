@@ -1,0 +1,6 @@
+# Voor de tests (python -m pytest -q tests/), bovenop requirements.txt
+-r requirements.txt
+pytest
+scikit-learn
+SimpleITK
+nibabel

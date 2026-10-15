@@ -1,0 +1,43 @@
+name: classifier
+
+# dicom-classifier: unit tests and the smoke test on Windows (Windows PowerShell 5.1) and Linux.
+on:
+  push:
+    paths: ['dicom-classifier/**', '.github/workflows/classifier.yml']
+  pull_request:
+    paths: ['dicom-classifier/**', '.github/workflows/classifier.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: dicom-classifier
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: dicom-classifier/requirements*.txt
+      - name: Install PyTorch (CPU)
+        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install requirements
+        run: python -m pip install -r requirements-test.txt
+      - name: Unit tests
+        run: python -m pytest -q tests/
+      - name: Smoke test (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\run_smoke_test.ps1 -Work "$env:RUNNER_TEMP\smoke"
+      - name: Smoke test (bash)
+        if: runner.os == 'Linux'
+        run: bash run_smoke_test.sh "$RUNNER_TEMP/smoke"

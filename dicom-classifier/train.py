@@ -24,16 +24,43 @@ import torch
 import torch.nn.functional as F
 
 from data import SeriesDataset, collate_skip_none
+from dicom_io import from_portable
 from metrics import modality_report, region_report
 from model import SeriesClassifier
 from taxonomy import MODALITY_CLASSES, REGIONS
 
 log = logging.getLogger("train")
 
+# Windows start dataloader-workers met 'spawn': elk proces importeert torch en MONAI opnieuw
+# (enkele seconden per worker). Minder workers en persistent_workers houden dat beperkt.
+DEFAULT_WORKERS = 2 if os.name == "nt" else 4
 
-def load_manifest(path: str) -> list[dict]:
-    with open(path) as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+
+def load_manifest(path: str, data_root: str | None = None) -> list[dict]:
+    """Records met absolute bestandspaden. Relatieve paden worden opgelost tegen data_root, of
+    anders tegen de "root" die build_dataset.py in elk record schreef. Zo werkt een manifest dat
+    op Linux is gemaakt ook op Windows (en omgekeerd) als je --data-root opgeeft."""
+    with open(path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh if line.strip()]
+    for rec in records:
+        root = data_root or rec.get("root") or os.path.dirname(os.path.abspath(path))
+        rec["files"] = [from_portable(f, root) for f in rec["files"]]
+    return records
+
+
+def read_csv_rows(path: str) -> list[dict]:
+    """CSV inlezen zoals Excel hem op Windows bewaart: UTF-8 met of zonder BOM, of Windows-1252,
+    en met ',' of ';' als scheidingsteken (Excel met Nederlandse landinstellingen gebruikt ';')."""
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):  # latin-1 decodeert altijd: laatste vangnet
+        try:
+            with open(path, newline="", encoding=enc) as fh:
+                text = fh.read()
+            break
+        except UnicodeDecodeError:
+            continue
+    header = text.splitlines()[0] if text else ""
+    delim = ";" if header.count(";") > header.count(",") else ","
+    return list(csv.DictReader(text.splitlines(), delimiter=delim))
 
 
 def apply_overrides(records: list[dict], path: str) -> int:
@@ -41,25 +68,24 @@ def apply_overrides(records: list[dict], path: str) -> int:
     corrected_regions: regio's gescheiden door ';', of 'unknown' om het label te wissen."""
     by_uid = {r["series_uid"]: r for r in records}
     n = 0
-    with open(path, newline="") as fh:
-        for row in csv.DictReader(fh):
-            rec = by_uid.get(row.get("series_uid", ""))
-            if rec is None:
-                continue
-            mod = (row.get("corrected_modality") or "").strip().upper()
-            reg = (row.get("corrected_regions") or "").strip()
-            if mod:
-                if mod not in MODALITY_CLASSES:
-                    raise ValueError(f"Onbekende modaliteit '{mod}' in {path}; kies uit {MODALITY_CLASSES}")
-                rec["modality"] = mod
-            if reg:
-                regs = [] if reg.lower() in ("unknown", "onbekend", "none") else \
-                    [x.strip().lower() for x in reg.split(";") if x.strip()]
-                bad = [x for x in regs if x not in REGIONS]
-                if bad:
-                    raise ValueError(f"Onbekende regio('s) {bad} in {path}; kies uit {REGIONS}")
-                rec["regions"], rec["region_source"] = sorted(regs), "manual"
-            n += bool(mod or reg)
+    for row in read_csv_rows(path):
+        rec = by_uid.get(row.get("series_uid", ""))
+        if rec is None:
+            continue
+        mod = (row.get("corrected_modality") or "").strip().upper()
+        reg = (row.get("corrected_regions") or "").strip()
+        if mod:
+            if mod not in MODALITY_CLASSES:
+                raise ValueError(f"Onbekende modaliteit '{mod}' in {path}; kies uit {MODALITY_CLASSES}")
+            rec["modality"] = mod
+        if reg:
+            regs = [] if reg.lower() in ("unknown", "onbekend", "none") else \
+                [x.strip().lower() for x in reg.split(";") if x.strip()]
+            bad = [x for x in regs if x not in REGIONS]
+            if bad:
+                raise ValueError(f"Onbekende regio('s) {bad} in {path}; kies uit {REGIONS}")
+            rec["regions"], rec["region_source"] = sorted(regs), "manual"
+        n += bool(mod or reg)
     return n
 
 
@@ -154,6 +180,8 @@ def evaluate(model, loader, device, threshold=0.5):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", required=True)
+    ap.add_argument("--data-root", help="map waar de DICOM-bestanden van het manifest nu staan "
+                                        "(als die verschilt van de map bij build_dataset.py)")
     ap.add_argument("--overrides", help="review.csv met handmatige correcties")
     ap.add_argument("--out", required=True)
     ap.add_argument("--encoder", default="resnet50", choices=["resnet18", "resnet50", "densenet121"])
@@ -166,7 +194,8 @@ def main(argv=None):
     ap.add_argument("--bp-weight", type=float, default=1.0, help="gewicht body-part-loss")
     ap.add_argument("--split-by", default="site", choices=["site", "patient"])
     ap.add_argument("--val-frac", type=float, default=0.2)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                    help=f"dataloader-processen (default {DEFAULT_WORKERS}; 0 = in het hoofdproces)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args(argv)
@@ -174,12 +203,13 @@ def main(argv=None):
     os.makedirs(args.out, exist_ok=True)
     torch.manual_seed(args.seed); np.random.seed(args.seed); random.seed(args.seed)
 
-    records = load_manifest(args.manifest)
+    records = load_manifest(args.manifest, args.data_root)
     if args.overrides:
         log.info("%d handmatige correcties toegepast", apply_overrides(records, args.overrides))
     train_recs, val_recs = group_split(records, args.split_by, args.val_frac, args.seed)
 
-    dl_kw = dict(batch_size=args.batch_size, num_workers=args.workers, collate_fn=collate_skip_none)
+    dl_kw = dict(batch_size=args.batch_size, num_workers=args.workers, collate_fn=collate_skip_none,
+                 persistent_workers=args.workers > 0)
     train_dl = torch.utils.data.DataLoader(SeriesDataset(train_recs, args.k, args.img_size, train=True),
                                            shuffle=True, drop_last=False, **dl_kw)
     val_dl = torch.utils.data.DataLoader(SeriesDataset(val_recs, args.k, args.img_size, train=False),
@@ -223,7 +253,7 @@ def main(argv=None):
             best = score
             torch.save({"state_dict": model.state_dict(), "config": config, "epoch": epoch, "val": ev},
                        os.path.join(args.out, "best.pt"))
-        with open(os.path.join(args.out, "metrics.json"), "w") as fh:
+        with open(os.path.join(args.out, "metrics.json"), "w", encoding="utf-8") as fh:
             json.dump(history, fh, indent=1)
     log.info("Klaar. Beste score %.3f, checkpoint: %s", best, os.path.join(args.out, "best.pt"))
 

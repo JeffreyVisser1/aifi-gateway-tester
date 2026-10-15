@@ -1,11 +1,18 @@
-# Kern (getest met Python 3.13, torch 2.14.1, torchvision 0.29.1, monai 1.6.1, pydicom 3.0.2)
+# Kern (getest met Python 3.13, torch 2.14.1, torchvision 0.29.1, monai 1.6.1, pydicom 3.0.2, pynetdicom 3.0.4)
+# Windows: installeer torch en torchvision EERST met het commando van https://pytorch.org/get-started/locally/
+# (CPU of de juiste CUDA-versie); pip installeert ze anders zonder keuze voor CPU/CUDA.
 torch
 torchvision
 monai>=1.3
 pydicom>=3.0
 numpy
 
+# DICOM-dienst (dicom_service.py): ontvangen, SR terugsturen, doorsturen, HTTP-API voor de gateway
+pynetdicom>=2.1
+pyyaml>=6.0
+
 # Gecomprimeerde DICOM (JPEG, JPEG 2000, JPEG-LS) decoderen
+# LET OP: pylibjpeg-libjpeg is GPLv3; vervangen of weglaten als het product verspreid wordt.
 pylibjpeg
 pylibjpeg-libjpeg
 pylibjpeg-openjpeg
@@ -15,6 +22,6 @@ pylibjpeg-openjpeg
 # SimpleITK
 # nibabel
 
-# Tests
+# Tests (python -m pytest -q tests/): pytest, scikit-learn, SimpleITK, nibabel
 # pytest
 # scikit-learn

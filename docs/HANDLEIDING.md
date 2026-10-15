@@ -143,3 +143,37 @@ rapport toont ze onder "Onleesbare objecten".
 Het rapport en de log bevatten geen patiëntgegevens: een studie heet daar alleen naar een
 korte hash (`studyRef`), en de originele UID's, PatientID en naam worden niet getoond.
 Ontvangen resultaatbestanden worden alleen opgeslagen met `receiver.saveFiles: true`.
+
+## 7. De dicom-classifier testen
+
+De [dicom-classifier](../dicom-classifier/README.md) is een DICOM-knooppunt dat bij elke
+ontvangen studie het oordeel (modaliteit en lichaamsdeel uit de pixels, vergeleken met de
+header) als SR-serie terugstuurt. De tester behandelt hem als een gatewaypoort:
+
+```yaml
+# tester.yaml
+targets:
+  - name: classifier
+    host: 127.0.0.1
+    port: 11300
+    aeTitle: AIFICLS
+    callingAeTitle: AIFITEST       # zet AIFITEST in scp.allowedCallingAeTitles van classifier.yaml
+matching:
+  resultModalities: [SR]
+  settleSeconds: 5
+```
+
+```yaml
+# classifier.yaml
+resultTarget:
+  enabled: true
+  host: <deze pc>
+  port: 11200
+  aeTitle: AIFITEST
+```
+
+Een test is geslaagd zodra het SR terugkomt; de tijd tot het resultaat is de verwerkingstijd van
+de classifier. Draait de classifier als add-on in de gateway (`addons:` in `gateway.yaml`), test
+dan gewoon de gatewaypoort: een studie die de add-on tegenhoudt komt niet bij de AI en geeft
+**geen resultaat**; de reden staat in `aifi-gateway status`.
+

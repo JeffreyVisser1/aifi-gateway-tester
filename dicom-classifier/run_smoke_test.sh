@@ -9,5 +9,6 @@ python build_dataset.py --input "$W/synth" --out "$W/work"
 python train.py --manifest "$W/work/manifest.jsonl" --out "$W/run" --encoder resnet18 --init none \
   --k 4 --img-size 96 --epochs 4 --batch-size 8 --lr 1e-3 --workers 2
 python infer.py --ckpt "$W/run/best.pt" --input "$W/synth" --out "$W/predictions.csv"
+python infer.py --ckpt "$W/run/best.pt" --input "$W/synth/CT_CHEST_0" --out "$W/ct_chest.json" --format json
 python -m pytest -q tests/
 echo "Klaar. Zie $W/predictions.csv en $W/run/metrics.json"

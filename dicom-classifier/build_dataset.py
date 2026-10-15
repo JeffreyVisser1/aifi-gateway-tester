@@ -6,7 +6,9 @@ Labels per serie:
                  anders BodyPartExamined (+ StudyDescription als vangnet)
 
 Output:
-  manifest.jsonl   één regel per serie, met bestandslijst en labels
+  manifest.jsonl   één regel per serie, met bestandslijst en labels. Bestandspaden staan relatief
+                   aan "root" (de --input-map) met '/' als scheidingsteken, zodat een manifest van
+                   Windows ook op Linux bruikbaar is en omgekeerd (train.py --data-root).
   review.csv       series die een mens moet bekijken: onbekende body part, of header en
                    TotalSegmentator zijn het oneens. Corrigeer daar en geef het bestand
                    terug aan train.py via --overrides.
@@ -22,7 +24,7 @@ import json
 import logging
 import os
 
-from dicom_io import scan_series
+from dicom_io import scan_series, to_portable
 from taxonomy import header_to_regions, map_modality, regions_to_cid4031
 
 log = logging.getLogger("build_dataset")
@@ -52,7 +54,8 @@ def main(argv=None):
 
     n_written = n_skipped = 0
     review_rows = []
-    with open(os.path.join(args.out, "manifest.jsonl"), "w") as fh:
+    root = os.path.abspath(args.input)
+    with open(os.path.join(args.out, "manifest.jsonl"), "w", encoding="utf-8") as fh:
         for s in series:
             modality = map_modality(s.modality_raw)
             if modality is None:
@@ -74,7 +77,8 @@ def main(argv=None):
                 regions, source = set(), "none"
 
             rec = s.to_dict()
-            rec.update(modality=modality, header_regions=sorted(header_regions),
+            rec["files"] = [to_portable(f, root) for f in s.files]
+            rec.update(root=root, modality=modality, header_regions=sorted(header_regions),
                        auto_regions=sorted(auto_regions) if auto_regions is not None else None,
                        regions=sorted(regions), region_source=source)
             fh.write(json.dumps(rec) + "\n")
@@ -102,7 +106,8 @@ def main(argv=None):
     fields = ["series_uid", "reason", "modality", "body_part_raw", "series_description", "header_regions",
               "auto_regions", "proposed_regions", "proposed_cid4031", "corrected_modality",
               "corrected_regions", "first_file"]
-    with open(review_path, "w", newline="") as fh:
+    # utf-8-sig: Excel op Windows herkent de codering dan (beschrijvingen met é, ü, ...)
+    with open(review_path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=fields)
         w.writeheader()
         w.writerows(review_rows)
