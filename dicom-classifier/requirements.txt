@@ -1,0 +1,20 @@
+# Kern (getest met Python 3.13, torch 2.14.1, torchvision 0.29.1, monai 1.6.1, pydicom 3.0.2)
+torch
+torchvision
+monai>=1.3
+pydicom>=3.0
+numpy
+
+# Gecomprimeerde DICOM (JPEG, JPEG 2000, JPEG-LS) decoderen
+pylibjpeg
+pylibjpeg-libjpeg
+pylibjpeg-openjpeg
+
+# Optioneel: body-part-labels via TotalSegmentator (build_dataset.py --totalseg)
+# totalsegmentator
+# SimpleITK
+# nibabel
+
+# Tests
+# pytest
+# scikit-learn
